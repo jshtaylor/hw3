@@ -5,6 +5,7 @@
 #include <cmath>
 #include <thread>
 #include <chrono>
+#include <string>
 
 using namespace std;
 
@@ -29,23 +30,25 @@ struct Edge {
 // 3D Perspective Projection to 2D Window Coordinates
 Point2D project(Point3D p) {
     double z_offset = p.z + 4.5; // Offset to keep shape in front of camera
+    if (z_offset <= 0.1) z_offset = 0.1; // Prevent division by zero or negative clipping
     int screenX = static_cast<int>(WIDTH / 2 + (p.x * FOV / z_offset));
     int screenY = static_cast<int>(HEIGHT / 2 - (p.y * FOV / z_offset)); // Invert Y for screen space
     return {screenX, screenY};
 }
 
-// Applies local X-Z spin first, then rotates around Y-axis
+// Rotation: Standard X-axis spin, Z-axis spin, then Y-axis global rotation
 Point3D rotate_xz_then_y(Point3D p, double spinXZ, double rotY) {
-    // 1. LOCAL SPIN (X-Z plane)
-    double x1 = p.x * cos(spinXZ) - p.y * sin(spinXZ);
-    double y1 = p.x * sin(spinXZ) + p.y * cos(spinXZ);
-    double z1 = p.z;
+    // 1. Rotation around X-axis
+    double y1 = p.y * cos(spinXZ) - p.z * sin(spinXZ);
+    double z1 = p.y * sin(spinXZ) + p.z * cos(spinXZ);
+    double x1 = p.x;
 
-    double y2 = y1 * cos(spinXZ) - z1 * sin(spinXZ);
-    double z2 = y1 * sin(spinXZ) + z1 * cos(spinXZ);
-    double x2 = x1;
+    // 2. Rotation around Z-axis
+    double x2 = x1 * cos(spinXZ) - y1 * sin(spinXZ);
+    double y2 = x1 * sin(spinXZ) + y1 * cos(spinXZ);
+    double z2 = z1;
 
-    // 2. GLOBAL ROTATION around Y-axis
+    // 3. Global Rotation around Y-axis
     double x3 = x2 * cos(rotY) + z2 * sin(rotY);
     double z3 = -x2 * sin(rotY) + z2 * cos(rotY);
     double y3 = y2;
@@ -102,7 +105,7 @@ int main() {
         {0,4,'#'}, {1,5,'#'}, {2,6,'#'}, {3,7,'#'}
     };
 
-    // Axes (Origin at 0, unit vectors at 1, 2, 3)
+    // Axes
     vector<Point3D> axisVertices = {
         {0, 0, 0},
         {2.2, 0, 0}, // X Tip
@@ -166,7 +169,7 @@ int main() {
             // Draw Axis Line
             XDrawLine(display, pixmap, gc, p1.x, p1.y, p2.x, p2.y);
 
-            // Draw Axis Text Label slightly past tip
+            // Draw Axis Text Label
             string labelStr(1, edge.label);
             XDrawString(display, pixmap, gc, p2.x + 5, p2.y + 5, labelStr.c_str(), 1);
         }
@@ -176,8 +179,8 @@ int main() {
         XFlush(display);
 
         // Update Angles
-        spinXZ += 0.05; // Spin on X-Z plane
-        rotY += 0.02;   // Rotate around Y axis
+        spinXZ += 0.05;
+        rotY += 0.02;
 
         // Lock to ~60 FPS
         this_thread::sleep_for(chrono::milliseconds(16));
