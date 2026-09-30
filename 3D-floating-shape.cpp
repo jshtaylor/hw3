@@ -24,7 +24,6 @@ struct Point2D {
 
 struct Edge {
     int u, v;
-    char label; // '#' for cube
 };
 
 // 3D Perspective Projection to 2D Window Coordinates
@@ -75,11 +74,12 @@ int main() {
     GC gc = XCreateGC(display, window, 0, NULL);
     
     Colormap colormap = DefaultColormap(display, screen);
-    XColor white, black, red, green;
+    XColor white, black, red, green, blue;
     XAllocNamedColor(display, colormap, "white", &white, &white);
     XAllocNamedColor(display, colormap, "black", &black, &black);
-    XAllocNamedColor(display, colormap, "#CC0000", &red, &red);
-    XAllocNamedColor(display, colormap, "#008800", &green, &green);
+    XAllocNamedColor(display, colormap, "#FF0000", &red, &red);
+    XAllocNamedColor(display, colormap, "#00AA00", &green, &green);
+    XAllocNamedColor(display, colormap, "#0000FF", &blue, &blue);
 
     // Create Off-Screen Buffer (Pixmap) for smooth rendering
     Pixmap pixmap = XCreatePixmap(display, window, WIDTH, HEIGHT, DefaultDepth(display, screen));
@@ -95,9 +95,9 @@ int main() {
     };
 
     vector<Edge> cubeEdges = {
-        {0,1,'#'}, {1,2,'#'}, {2,3,'#'}, {3,0,'#'},
-        {4,5,'#'}, {5,6,'#'}, {6,7,'#'}, {7,4,'#'},
-        {0,4,'#'}, {1,5,'#'}, {2,6,'#'}, {3,7,'#'}
+        {0,1}, {1,2}, {2,3}, {3,0},
+        {4,5}, {5,6}, {6,7}, {7,4},
+        {0,4}, {1,5}, {2,6}, {3,7}
     };
 
     double rotY = 0.0;
@@ -107,6 +107,9 @@ int main() {
     // Center coordinates for screen axes
     int originX = WIDTH / 2;
     int originY = HEIGHT / 2;
+
+    // Array of colors for cube edges
+    unsigned long edgeColors[] = { red.pixel, green.pixel, blue.pixel };
 
     // 3. Animation Loop
     while (running) {
@@ -126,20 +129,28 @@ int main() {
         XSetForeground(display, gc, white.pixel);
         XFillRectangle(display, pixmap, gc, 0, 0, WIDTH, HEIGHT);
 
-        // --- Render Full-Screen X & Y Axes ---
-        // Horizontal X Axis Line (Full width across screen)
-        XSetForeground(display, gc, red.pixel);
+        // --- Render Thicker Black X & Y Axes ---
+        XSetLineAttributes(display, gc, 3, LineSolid, CapButt, JoinMiter); // Set line thickness to 3px
+        XSetForeground(display, gc, black.pixel);
+
+        // Horizontal X Axis Line
         XDrawLine(display, pixmap, gc, 0, originY, WIDTH, originY);
         XDrawString(display, pixmap, gc, WIDTH - 20, originY - 5, "X", 1);
 
-        // Vertical Y Axis Line (Full height down screen)
-        XSetForeground(display, gc, green.pixel);
+        // Vertical Y Axis Line
         XDrawLine(display, pixmap, gc, originX, 0, originX, HEIGHT);
-        XDrawString(display, pixmap, gc, originX + 5, 15, "Y", 1);
+        XDrawString(display, pixmap, gc, originX + 8, 15, "Y", 1);
 
-        // --- Render Rotating Cube (Black Wireframe) ---
-        XSetForeground(display, gc, black.pixel);
-        for (const auto& edge : cubeEdges) {
+        // Reset line thickness to 2px for cube edges
+        XSetLineAttributes(display, gc, 2, LineSolid, CapButt, JoinMiter);
+
+        // --- Render Rotating Cube with RGB Edges ---
+        for (size_t i = 0; i < cubeEdges.size(); ++i) {
+            const auto& edge = cubeEdges[i];
+
+            // Assign Red, Green, or Blue dynamically based on edge index
+            XSetForeground(display, gc, edgeColors[i % 3]);
+
             Point3D p1_3d = rotate_y_z(cubeVertices[edge.u], rotY, rotZ);
             Point3D p2_3d = rotate_y_z(cubeVertices[edge.v], rotY, rotZ);
 
@@ -153,9 +164,9 @@ int main() {
         XCopyArea(display, pixmap, window, gc, 0, 0, WIDTH, HEIGHT, 0, 0);
         XFlush(display);
 
-        // Update Rotation Angles
-        rotY += 0.03; // Rotate on Y-axis
-        rotZ += 0.02; // Rotate on Z-axis
+        // Update Rotation Angles (Halved speed: 0.015 & 0.01)
+        rotY += 0.015;
+        rotZ += 0.01;
 
         // Lock to ~60 FPS
         this_thread::sleep_for(chrono::milliseconds(16));
