@@ -24,7 +24,7 @@ struct Point2D {
 
 struct Edge {
     int u, v;
-    char label; // 'X', 'Y', 'Z', or '#' for cube
+    char label; // '#' for cube
 };
 
 // 3D Perspective Projection to 2D Window Coordinates
@@ -36,24 +36,19 @@ Point2D project(Point3D p) {
     return {screenX, screenY};
 }
 
-// Rotation: Standard X-axis spin, Z-axis spin, then Y-axis global rotation
-Point3D rotate_xz_then_y(Point3D p, double spinXZ, double rotY) {
-    // 1. Rotation around X-axis
-    double y1 = p.y * cos(spinXZ) - p.z * sin(spinXZ);
-    double z1 = p.y * sin(spinXZ) + p.z * cos(spinXZ);
-    double x1 = p.x;
+// Rotation: Standard Y-axis rotation followed by Z-axis rotation
+Point3D rotate_y_z(Point3D p, double rotY, double rotZ) {
+    // 1. Rotation around Y-axis
+    double x1 = p.x * cos(rotY) + p.z * sin(rotY);
+    double y1 = p.y;
+    double z1 = -p.x * sin(rotY) + p.z * cos(rotY);
 
     // 2. Rotation around Z-axis
-    double x2 = x1 * cos(spinXZ) - y1 * sin(spinXZ);
-    double y2 = x1 * sin(spinXZ) + y1 * cos(spinXZ);
+    double x2 = x1 * cos(rotZ) - y1 * sin(rotZ);
+    double y2 = x1 * sin(rotZ) + y1 * cos(rotZ);
     double z2 = z1;
 
-    // 3. Global Rotation around Y-axis
-    double x3 = x2 * cos(rotY) + z2 * sin(rotY);
-    double z3 = -x2 * sin(rotY) + z2 * cos(rotY);
-    double y3 = y2;
-
-    return {x3, y3, z3};
+    return {x2, y2, z2};
 }
 
 int main() {
@@ -67,10 +62,10 @@ int main() {
     int screen = DefaultScreen(display);
     Window root = RootWindow(display, screen);
 
-    // Create Window
+    // Create Window with White Background
     Window window = XCreateSimpleWindow(
         display, root, 100, 100, WIDTH, HEIGHT, 1,
-        BlackPixel(display, screen), BlackPixel(display, screen)
+        BlackPixel(display, screen), WhitePixel(display, screen)
     );
 
     XSelectInput(display, window, ExposureMask | KeyPressMask);
@@ -80,11 +75,11 @@ int main() {
     GC gc = XCreateGC(display, window, 0, NULL);
     
     Colormap colormap = DefaultColormap(display, screen);
-    XColor white, red, green, blue;
+    XColor white, black, red, green;
     XAllocNamedColor(display, colormap, "white", &white, &white);
-    XAllocNamedColor(display, colormap, "#FF4444", &red, &red);
-    XAllocNamedColor(display, colormap, "#44FF44", &green, &green);
-    XAllocNamedColor(display, colormap, "#4488FF", &blue, &blue);
+    XAllocNamedColor(display, colormap, "black", &black, &black);
+    XAllocNamedColor(display, colormap, "#CC0000", &red, &red);
+    XAllocNamedColor(display, colormap, "#008800", &green, &green);
 
     // Create Off-Screen Buffer (Pixmap) for smooth rendering
     Pixmap pixmap = XCreatePixmap(display, window, WIDTH, HEIGHT, DefaultDepth(display, screen));
@@ -93,7 +88,7 @@ int main() {
     Atom wmDeleteMessage = XInternAtom(display, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(display, window, &wmDeleteMessage, 1);
 
-    // 2. Define Shape Geometry
+    // 2. Define Cube Geometry
     vector<Point3D> cubeVertices = {
         {-1, -1, -1}, { 1, -1, -1}, { 1,  1, -1}, {-1,  1, -1},
         {-1, -1,  1}, { 1, -1,  1}, { 1,  1,  1}, {-1,  1,  1}
@@ -105,23 +100,13 @@ int main() {
         {0,4,'#'}, {1,5,'#'}, {2,6,'#'}, {3,7,'#'}
     };
 
-    // Axes
-    vector<Point3D> axisVertices = {
-        {0, 0, 0},
-        {2.2, 0, 0}, // X Tip
-        {0, 2.2, 0}, // Y Tip
-        {0, 0, 2.2}  // Z Tip
-    };
-
-    vector<Edge> axisEdges = {
-        {0, 1, 'X'},
-        {0, 2, 'Y'},
-        {0, 3, 'Z'}
-    };
-
-    double spinXZ = 0.0;
     double rotY = 0.0;
+    double rotZ = 0.0;
     bool running = true;
+
+    // Center coordinates for screen axes
+    int originX = WIDTH / 2;
+    int originY = HEIGHT / 2;
 
     // 3. Animation Loop
     while (running) {
@@ -137,50 +122,40 @@ int main() {
             }
         }
 
-        // Clear Off-Screen Pixmap Buffer
-        XSetForeground(display, gc, BlackPixel(display, screen));
+        // Clear Off-Screen Pixmap Buffer with White
+        XSetForeground(display, gc, white.pixel);
         XFillRectangle(display, pixmap, gc, 0, 0, WIDTH, HEIGHT);
 
-        // --- Render Cube ---
-        XSetForeground(display, gc, white.pixel);
+        // --- Render Full-Screen X & Y Axes ---
+        // Horizontal X Axis Line (Full width across screen)
+        XSetForeground(display, gc, red.pixel);
+        XDrawLine(display, pixmap, gc, 0, originY, WIDTH, originY);
+        XDrawString(display, pixmap, gc, WIDTH - 20, originY - 5, "X", 1);
+
+        // Vertical Y Axis Line (Full height down screen)
+        XSetForeground(display, gc, green.pixel);
+        XDrawLine(display, pixmap, gc, originX, 0, originX, HEIGHT);
+        XDrawString(display, pixmap, gc, originX + 5, 15, "Y", 1);
+
+        // --- Render Rotating Cube (Black Wireframe) ---
+        XSetForeground(display, gc, black.pixel);
         for (const auto& edge : cubeEdges) {
-            Point3D p1_3d = rotate_xz_then_y(cubeVertices[edge.u], spinXZ, rotY);
-            Point3D p2_3d = rotate_xz_then_y(cubeVertices[edge.v], spinXZ, rotY);
+            Point3D p1_3d = rotate_y_z(cubeVertices[edge.u], rotY, rotZ);
+            Point3D p2_3d = rotate_y_z(cubeVertices[edge.v], rotY, rotZ);
 
             Point2D p1 = project(p1_3d);
             Point2D p2 = project(p2_3d);
 
             XDrawLine(display, pixmap, gc, p1.x, p1.y, p2.x, p2.y);
-        }
-
-        // --- Render Axes with Labels ---
-        for (const auto& edge : axisEdges) {
-            Point3D p1_3d = rotate_xz_then_y(axisVertices[edge.u], spinXZ, rotY);
-            Point3D p2_3d = rotate_xz_then_y(axisVertices[edge.v], spinXZ, rotY);
-
-            Point2D p1 = project(p1_3d);
-            Point2D p2 = project(p2_3d);
-
-            // Set Axis Color
-            if (edge.label == 'X') XSetForeground(display, gc, red.pixel);
-            else if (edge.label == 'Y') XSetForeground(display, gc, green.pixel);
-            else if (edge.label == 'Z') XSetForeground(display, gc, blue.pixel);
-
-            // Draw Axis Line
-            XDrawLine(display, pixmap, gc, p1.x, p1.y, p2.x, p2.y);
-
-            // Draw Axis Text Label
-            string labelStr(1, edge.label);
-            XDrawString(display, pixmap, gc, p2.x + 5, p2.y + 5, labelStr.c_str(), 1);
         }
 
         // Copy Pixmap to Window (Double Buffering Swap)
         XCopyArea(display, pixmap, window, gc, 0, 0, WIDTH, HEIGHT, 0, 0);
         XFlush(display);
 
-        // Update Angles
-        spinXZ += 0.05;
-        rotY += 0.02;
+        // Update Rotation Angles
+        rotY += 0.03; // Rotate on Y-axis
+        rotZ += 0.02; // Rotate on Z-axis
 
         // Lock to ~60 FPS
         this_thread::sleep_for(chrono::milliseconds(16));
