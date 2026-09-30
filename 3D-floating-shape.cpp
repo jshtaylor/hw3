@@ -1,3 +1,5 @@
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
 #include <iostream>
 #include <vector>
 #include <cmath>
@@ -6,11 +8,10 @@
 
 using namespace std;
 
-const int WIDTH = 80;
-const int HEIGHT = 40;
-const double FOV = 60.0;
-const double SCALE_X = 40.0;
-const double SCALE_Y = 20.0;
+// Window dimensions
+const int WIDTH = 800;
+const int HEIGHT = 600;
+const double FOV = 400.0; // Field of view scaling
 
 struct Point3D {
     double x, y, z;
@@ -22,31 +23,24 @@ struct Point2D {
 
 struct Edge {
     int u, v;
-    char symbol;
+    char label; // 'X', 'Y', 'Z', or '#' for cube
 };
 
-void clear_screen() {
-    cout << "\033[H\033[J";
-}
-
+// 3D Perspective Projection to 2D Window Coordinates
 Point2D project(Point3D p) {
-    double z_offset = p.z + 4.0; 
-    
-    int screenX = static_cast<int>(WIDTH / 2 + (p.x * FOV / z_offset) * (SCALE_X / 40.0));
-    int screenY = static_cast<int>(HEIGHT / 2 - (p.y * FOV / z_offset) * (SCALE_Y / 20.0));
-    
+    double z_offset = p.z + 4.5; // Offset to keep shape in front of camera
+    int screenX = static_cast<int>(WIDTH / 2 + (p.x * FOV / z_offset));
+    int screenY = static_cast<int>(HEIGHT / 2 - (p.y * FOV / z_offset)); // Invert Y for screen space
     return {screenX, screenY};
 }
 
 // Applies local X-Z spin first, then rotates around Y-axis
 Point3D rotate_xz_then_y(Point3D p, double spinXZ, double rotY) {
-    // 1. LOCAL SPIN (X-Z plane spin)
-    // Rotate around Z axis
+    // 1. LOCAL SPIN (X-Z plane)
     double x1 = p.x * cos(spinXZ) - p.y * sin(spinXZ);
     double y1 = p.x * sin(spinXZ) + p.y * cos(spinXZ);
     double z1 = p.z;
 
-    // Rotate around X axis
     double y2 = y1 * cos(spinXZ) - z1 * sin(spinXZ);
     double z2 = y1 * sin(spinXZ) + z1 * cos(spinXZ);
     double x2 = x1;
@@ -59,36 +53,44 @@ Point3D rotate_xz_then_y(Point3D p, double spinXZ, double rotY) {
     return {x3, y3, z3};
 }
 
-void draw_line(vector<string>& buffer, Point2D p1, Point2D p2, char symbol) {
-    int x1 = p1.x, y1 = p1.y;
-    int x2 = p2.x, y2 = p2.y;
-
-    int dx = abs(x2 - x1);
-    int dy = abs(y2 - y1);
-    int sx = (x1 < x2) ? 1 : -1;
-    int sy = (y1 < y2) ? 1 : -1;
-    int err = dx - dy;
-
-    while (true) {
-        if (x1 >= 0 && x1 < WIDTH && y1 >= 0 && y1 < HEIGHT) {
-            buffer[y1][x1] = symbol;
-        }
-
-        if (x1 == x2 && y1 == y2) break;
-
-        int e2 = 2 * err;
-        if (e2 > -dy) {
-            err -= dy;
-            x1 += sx;
-        }
-        if (e2 < dx) {
-            err += dx;
-            y1 += sy;
-        }
-    }
-}
-
 int main() {
+    // 1. Initialize X Display
+    Display* display = XOpenDisplay(NULL);
+    if (!display) {
+        cerr << "Error: Unable to open X Display." << endl;
+        return 1;
+    }
+
+    int screen = DefaultScreen(display);
+    Window root = RootWindow(display, screen);
+
+    // Create Window
+    Window window = XCreateSimpleWindow(
+        display, root, 100, 100, WIDTH, HEIGHT, 1,
+        BlackPixel(display, screen), BlackPixel(display, screen)
+    );
+
+    XSelectInput(display, window, ExposureMask | KeyPressMask);
+    XMapWindow(display, window);
+
+    // Setup Graphics Context & Colors
+    GC gc = XCreateGC(display, window, 0, NULL);
+    
+    Colormap colormap = DefaultColormap(display, screen);
+    XColor white, red, green, blue;
+    XAllocNamedColor(display, colormap, "white", &white, &white);
+    XAllocNamedColor(display, colormap, "#FF4444", &red, &red);
+    XAllocNamedColor(display, colormap, "#44FF44", &green, &green);
+    XAllocNamedColor(display, colormap, "#4488FF", &blue, &blue);
+
+    // Create Off-Screen Buffer (Pixmap) for smooth rendering
+    Pixmap pixmap = XCreatePixmap(display, window, WIDTH, HEIGHT, DefaultDepth(display, screen));
+
+    // Handle Window Close Event
+    Atom wmDeleteMessage = XInternAtom(display, "WM_DELETE_WINDOW", False);
+    XSetWMProtocols(display, window, &wmDeleteMessage, 1);
+
+    // 2. Define Shape Geometry
     vector<Point3D> cubeVertices = {
         {-1, -1, -1}, { 1, -1, -1}, { 1,  1, -1}, {-1,  1, -1},
         {-1, -1,  1}, { 1, -1,  1}, { 1,  1,  1}, {-1,  1,  1}
@@ -100,12 +102,12 @@ int main() {
         {0,4,'#'}, {1,5,'#'}, {2,6,'#'}, {3,7,'#'}
     };
 
-    // Origin + 3 Axis Tips
+    // Axes (Origin at 0, unit vectors at 1, 2, 3)
     vector<Point3D> axisVertices = {
         {0, 0, 0},
-        {2, 0, 0}, // X
-        {0, 2, 0}, // Y
-        {0, 0, 2}  // Z
+        {2.2, 0, 0}, // X Tip
+        {0, 2.2, 0}, // Y Tip
+        {0, 0, 2.2}  // Z Tip
     };
 
     vector<Edge> axisEdges = {
@@ -114,43 +116,78 @@ int main() {
         {0, 3, 'Z'}
     };
 
-    double spinXZ = 0.0; // Fast local spin on X-Z plane
-    double rotY = 0.0;   // Slower rotation around Y-axis
+    double spinXZ = 0.0;
+    double rotY = 0.0;
+    bool running = true;
 
-    while (true) {
-        vector<string> buffer(HEIGHT, string(WIDTH, ' '));
+    // 3. Animation Loop
+    while (running) {
+        // Handle Input Events
+        while (XPending(display) > 0) {
+            XEvent event;
+            XNextEvent(display, &event);
+            if (event.type == ClientMessage && (Atom)event.xclient.data.l[0] == wmDeleteMessage) {
+                running = false;
+            }
+            if (event.type == KeyPress) {
+                running = false; // Any key press exits
+            }
+        }
 
-        // Render Cube
+        // Clear Off-Screen Pixmap Buffer
+        XSetForeground(display, gc, BlackPixel(display, screen));
+        XFillRectangle(display, pixmap, gc, 0, 0, WIDTH, HEIGHT);
+
+        // --- Render Cube ---
+        XSetForeground(display, gc, white.pixel);
         for (const auto& edge : cubeEdges) {
             Point3D p1_3d = rotate_xz_then_y(cubeVertices[edge.u], spinXZ, rotY);
             Point3D p2_3d = rotate_xz_then_y(cubeVertices[edge.v], spinXZ, rotY);
 
             Point2D p1 = project(p1_3d);
             Point2D p2 = project(p2_3d);
-            draw_line(buffer, p1, p2, edge.symbol);
+
+            XDrawLine(display, pixmap, gc, p1.x, p1.y, p2.x, p2.y);
         }
 
-        // Render Axes
+        // --- Render Axes with Labels ---
         for (const auto& edge : axisEdges) {
             Point3D p1_3d = rotate_xz_then_y(axisVertices[edge.u], spinXZ, rotY);
             Point3D p2_3d = rotate_xz_then_y(axisVertices[edge.v], spinXZ, rotY);
 
             Point2D p1 = project(p1_3d);
             Point2D p2 = project(p2_3d);
-            draw_line(buffer, p1, p2, edge.symbol);
+
+            // Set Axis Color
+            if (edge.label == 'X') XSetForeground(display, gc, red.pixel);
+            else if (edge.label == 'Y') XSetForeground(display, gc, green.pixel);
+            else if (edge.label == 'Z') XSetForeground(display, gc, blue.pixel);
+
+            // Draw Axis Line
+            XDrawLine(display, pixmap, gc, p1.x, p1.y, p2.x, p2.y);
+
+            // Draw Axis Text Label slightly past tip
+            string labelStr(1, edge.label);
+            XDrawString(display, pixmap, gc, p2.x + 5, p2.y + 5, labelStr.c_str(), 1);
         }
 
-        clear_screen();
-        for (const string& row : buffer) {
-            cout << row << "\n";
-        }
+        // Copy Pixmap to Window (Double Buffering Swap)
+        XCopyArea(display, pixmap, window, gc, 0, 0, WIDTH, HEIGHT, 0, 0);
+        XFlush(display);
 
-        // Increment angles at different rates
-        spinXZ += 0.08; // Faster local spin rate
-        rotY += 0.03;   // Y-axis rotation rate
+        // Update Angles
+        spinXZ += 0.05; // Spin on X-Z plane
+        rotY += 0.02;   // Rotate around Y axis
 
-        this_thread::sleep_for(chrono::milliseconds(33));
+        // Lock to ~60 FPS
+        this_thread::sleep_for(chrono::milliseconds(16));
     }
+
+    // Cleanup Resources
+    XFreePixmap(display, pixmap);
+    XFreeGC(display, gc);
+    XDestroyWindow(display, window);
+    XCloseDisplay(display);
 
     return 0;
 }
