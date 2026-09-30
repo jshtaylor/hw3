@@ -1,5 +1,6 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/keysym.h>
 #include <iostream>
 #include <vector>
 #include <cmath>
@@ -24,6 +25,12 @@ struct Point2D {
 
 struct Edge {
     int u, v;
+};
+
+struct Shape {
+    string name;
+    vector<Point3D> vertices;
+    vector<Edge> edges;
 };
 
 // 3D Perspective Projection to 2D Window Coordinates
@@ -88,18 +95,52 @@ int main() {
     Atom wmDeleteMessage = XInternAtom(display, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(display, window, &wmDeleteMessage, 1);
 
-    // 2. Define Cube Geometry
-    vector<Point3D> cubeVertices = {
-        {-1, -1, -1}, { 1, -1, -1}, { 1,  1, -1}, {-1,  1, -1},
-        {-1, -1,  1}, { 1, -1,  1}, { 1,  1,  1}, {-1,  1,  1}
-    };
+    // 2. Define Geometries
+    vector<Shape> shapes;
 
-    vector<Edge> cubeEdges = {
-        {0,1}, {1,2}, {2,3}, {3,0},
-        {4,5}, {5,6}, {6,7}, {7,4},
-        {0,4}, {1,5}, {2,6}, {3,7}
-    };
+    // --- Shape 0: Cube ---
+    shapes.push_back({
+        "Cube",
+        {
+            {-1, -1, -1}, { 1, -1, -1}, { 1,  1, -1}, {-1,  1, -1},
+            {-1, -1,  1}, { 1, -1,  1}, { 1,  1,  1}, {-1,  1,  1}
+        },
+        {
+            {0,1}, {1,2}, {2,3}, {3,0},
+            {4,5}, {5,6}, {6,7}, {7,4},
+            {0,4}, {1,5}, {2,6}, {3,7}
+        }
+    });
 
+    // --- Shape 1: Square-Based Pyramid ---
+    shapes.push_back({
+        "Square-Based Pyramid",
+        {
+            {-1, -1, -1}, { 1, -1, -1}, { 1, -1,  1}, {-1, -1,  1}, // Base
+            { 0,  1.2, 0}                                            // Apex
+        },
+        {
+            {0,1}, {1,2}, {2,3}, {3,0}, // Base edges
+            {0,4}, {1,4}, {2,4}, {3,4}  // Side edges to apex
+        }
+    });
+
+    // --- Shape 2: Triangular Pyramid (Tetrahedron) ---
+    shapes.push_back({
+        "Triangle-Based Pyramid",
+        {
+            { 0.0,       1.2,  0.0},      // Apex
+            {-1.0,      -0.8, -0.7},      // Base vertex 1
+            { 1.0,      -0.8, -0.7},      // Base vertex 2
+            { 0.0,      -0.8,  1.0}       // Base vertex 3
+        },
+        {
+            {1,2}, {2,3}, {3,1},          // Base edges
+            {0,1}, {0,2}, {0,3}           // Side edges to apex
+        }
+    });
+
+    size_t currentShapeIndex = 0;
     double rotY = 0.0;
     double rotZ = 0.0;
     bool running = true;
@@ -108,7 +149,7 @@ int main() {
     int originX = WIDTH / 2;
     int originY = HEIGHT / 2;
 
-    // Array of colors for cube edges
+    // Array of colors for shape edges
     unsigned long edgeColors[] = { red.pixel, green.pixel, blue.pixel };
 
     // 3. Animation Loop
@@ -121,7 +162,12 @@ int main() {
                 running = false;
             }
             if (event.type == KeyPress) {
-                running = false; // Any key press exits
+                KeySym keysym = XLookupKeysym(&event.xkey, 0);
+                if (keysym == XK_s || keysym == XK_S) {
+                    currentShapeIndex = (currentShapeIndex + 1) % shapes.size();
+                } else if (keysym == XK_Escape || keysym == XK_q || keysym == XK_Q) {
+                    running = false;
+                }
             }
         }
 
@@ -130,7 +176,7 @@ int main() {
         XFillRectangle(display, pixmap, gc, 0, 0, WIDTH, HEIGHT);
 
         // --- Render Thicker Black X & Y Axes ---
-        XSetLineAttributes(display, gc, 3, LineSolid, CapButt, JoinMiter); // Set line thickness to 3px
+        XSetLineAttributes(display, gc, 3, LineSolid, CapButt, JoinMiter);
         XSetForeground(display, gc, black.pixel);
 
         // Horizontal X Axis Line
@@ -141,18 +187,22 @@ int main() {
         XDrawLine(display, pixmap, gc, originX, 0, originX, HEIGHT);
         XDrawString(display, pixmap, gc, originX + 8, 15, "Y", 1);
 
-        // Reset line thickness to 2px for cube edges
+        // --- Render Current Shape Info Prompt ---
+        string infoStr = "Press 'S' to switch shape. Current: " + shapes[currentShapeIndex].name;
+        XDrawString(display, pixmap, gc, 20, 30, infoStr.c_str(), infoStr.length());
+
+        // Reset line thickness to 2px for shape edges
         XSetLineAttributes(display, gc, 2, LineSolid, CapButt, JoinMiter);
 
-        // --- Render Rotating Cube with RGB Edges ---
-        for (size_t i = 0; i < cubeEdges.size(); ++i) {
-            const auto& edge = cubeEdges[i];
+        // --- Render Active Rotating Shape with RGB Edges ---
+        const auto& activeShape = shapes[currentShapeIndex];
+        for (size_t i = 0; i < activeShape.edges.size(); ++i) {
+            const auto& edge = activeShape.edges[i];
 
-            // Assign Red, Green, or Blue dynamically based on edge index
             XSetForeground(display, gc, edgeColors[i % 3]);
 
-            Point3D p1_3d = rotate_y_z(cubeVertices[edge.u], rotY, rotZ);
-            Point3D p2_3d = rotate_y_z(cubeVertices[edge.v], rotY, rotZ);
+            Point3D p1_3d = rotate_y_z(activeShape.vertices[edge.u], rotY, rotZ);
+            Point3D p2_3d = rotate_y_z(activeShape.vertices[edge.v], rotY, rotZ);
 
             Point2D p1 = project(p1_3d);
             Point2D p2 = project(p2_3d);
@@ -164,7 +214,7 @@ int main() {
         XCopyArea(display, pixmap, window, gc, 0, 0, WIDTH, HEIGHT, 0, 0);
         XFlush(display);
 
-        // Update Rotation Angles (Halved speed: 0.015 & 0.01)
+        // Update Rotation Angles
         rotY += 0.015;
         rotZ += 0.01;
 
