@@ -175,21 +175,22 @@ int main() {
         XSetForeground(display, gc, white.pixel);
         XFillRectangle(display, pixmap, gc, 0, 0, WIDTH, HEIGHT);
 
-        // --- Render Thicker Black X & Y Axes ---
+        // --- Render Thicker Black X, Y, & Z Axes ---
         XSetLineAttributes(display, gc, 3, LineSolid, CapButt, JoinMiter);
         XSetForeground(display, gc, black.pixel);
 
         // Horizontal X Axis Line
         XDrawLine(display, pixmap, gc, 0, originY, WIDTH, originY);
-        XDrawString(display, pixmap, gc, WIDTH - 20, originY - 5, "X", 1);
 
         // Vertical Y Axis Line
         XDrawLine(display, pixmap, gc, originX, 0, originX, HEIGHT);
-        XDrawString(display, pixmap, gc, originX + 8, 15, "Y", 1);
 
-        // --- Render Current Shape Info Prompt ---
-        string infoStr = "Press 'S' to switch shape. Current: " + shapes[currentShapeIndex].name;
-        XDrawString(display, pixmap, gc, 20, 30, infoStr.c_str(), infoStr.length());
+        // Half-length diagonal Z Axis Line (45-degree angle)
+        int zX1 = originX - WIDTH / 4;
+        int zY1 = originY + HEIGHT / 4;
+        int zX2 = originX + WIDTH / 4;
+        int zY2 = originY - HEIGHT / 4;
+        XDrawLine(display, pixmap, gc, zX1, zY1, zX2, zY2);
 
         // Reset line thickness to 2px for shape edges
         XSetLineAttributes(display, gc, 2, LineSolid, CapButt, JoinMiter);
